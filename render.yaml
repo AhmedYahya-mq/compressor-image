@@ -1,0 +1,12 @@
+# Exported from Render on 2025-09-04T17:18:04Z
+services:
+- type: web
+  name: compressor-image
+  runtime: go
+  repo: https://github.com/AhmedYahya-mq/compressor-image
+  plan: free
+  region: frankfurt
+  buildCommand: npm
+  startCommand: node index.js
+  autoDeployTrigger: commit
+version: "1"
