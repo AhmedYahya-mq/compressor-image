@@ -1,0 +1,19 @@
+# تجاهل node_modules
+node_modules/
+logs/
+
+nohup.out
+
+# تجاهل ملفات النظام المؤقتة
+.DS_Store
+Thumbs.db
+
+# تجاهل ملفات البيئة
+.env
+
+# تجاهل ملفات Build
+dist/
+build/
+
+# تجاهل ملفات الـ logs
+*.log
