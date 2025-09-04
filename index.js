@@ -8,14 +8,17 @@ const path = require('path');
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-// إنشاء مجلدات
+// إنشاء مجلدات إذا لم تكن موجودة
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 if (!fs.existsSync('compressed')) fs.mkdirSync('compressed');
-if (!fs.existsSync('logs')) fs.mkdirSync('logs'); // مجلد للسجلات
+if (!fs.existsSync('logs')) fs.mkdirSync('logs');
 
 app.use(morgan("dev")); 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// استضافة الملفات المضغوطة مباشرة
+app.use('/compressed', express.static(path.join(__dirname, 'compressed')));
 
 function logRequest(req) {
     const timestamp = new Date().toISOString();
@@ -26,17 +29,14 @@ function logRequest(req) {
         url: req.originalUrl,
         method: req.method
     };
-    const logText = JSON.stringify(logData, null, 2) + "\n----------------------\n";
-    fs.appendFileSync('logs/requests.txt', logText, 'utf8');
+    fs.appendFileSync('logs/requests.txt', JSON.stringify(logData, null, 2) + "\n----------------------\n", 'utf8');
 }
 
 app.post('/compress', upload.any(), async (req, res) => {
-    logRequest(req); // تسجيل البيانات في ملف قبل المعالجة
+    logRequest(req);
 
     const files = req.files.filter(f => f.fieldname.startsWith('images'));
-    if (!files || files.length === 0) {
-        return res.status(400).json({ error: 'No images uploaded' });
-    }
+    if (!files || files.length === 0) return res.status(400).json({ error: 'No images uploaded' });
 
     const qualityJPEG = parseInt(req.body.quality_jpeg) || 75;
     const qualityPNG = parseInt(req.body.quality_png) || 80;
@@ -77,49 +77,44 @@ app.post('/compress', upload.any(), async (req, res) => {
                 image = image.flatten({ background: { r: 255, g: 255, b: 255 } });
             }
 
-            const outputPath = `compressed/${Date.now()}_${originalName}`;
+            const baseName = `${Date.now()}_${path.parse(originalName).name}`;
             let compressedFormats = [];
 
             if (convertTo.length > 0) {
                 for (let format of convertTo) {
-                    let fmt = format.toLowerCase();
-                    let outPath = `${outputPath}.${fmt}`;
-                    
+                    const fmt = format.toLowerCase();
+                    const outPath = path.join('compressed', `${baseName}.${fmt}`);
+
                     if (fmt === 'jpeg' || fmt === 'jpg') await image.jpeg({ quality: qualityJPEG }).toFile(outPath);
                     else if (fmt === 'png') await image.png({ quality: qualityPNG, compressionLevel: 9 }).toFile(outPath);
                     else if (fmt === 'webp') await image.webp({ quality: qualityWebP }).toFile(outPath);
                     else if (fmt === 'avif') await image.avif({ quality: qualityAVIF }).toFile(outPath);
 
                     const compressedSize = fs.statSync(outPath).size;
-                    const compressedBuffer = fs.readFileSync(outPath);
 
                     compressedFormats.push({
                         format: fmt,
                         compressed_size: compressedSize,
                         ratio: ((1 - compressedSize / originalSize) * 100).toFixed(2) + '%',
-                        compressed_file: compressedBuffer.toString('base64')
+                        download_url: `${req.protocol}://${req.get('host')}/compressed/${path.basename(outPath)}`
                     });
-
-                    fs.unlinkSync(outPath);
                 }
             } else {
-                if (ext === '.png') await image.png({ quality: qualityPNG }).toFile(outputPath);
-                else await image.jpeg({ quality: qualityJPEG }).toFile(outputPath);
+                const outPath = path.join('compressed', `${baseName}${ext}`);
+                if (ext === '.png') await image.png({ quality: qualityPNG }).toFile(outPath);
+                else await image.jpeg({ quality: qualityJPEG }).toFile(outPath);
 
-                const compressedSize = fs.statSync(outputPath).size;
-                const compressedBuffer = fs.readFileSync(outputPath);
+                const compressedSize = fs.statSync(outPath).size;
 
                 compressedFormats.push({
                     format: ext.replace('.', ''),
                     compressed_size: compressedSize,
                     ratio: ((1 - compressedSize / originalSize) * 100).toFixed(2) + '%',
-                    compressed_file: compressedBuffer.toString('base64')
+                    download_url: `${req.protocol}://${req.get('host')}/compressed/${path.basename(outPath)}`
                 });
-
-                fs.unlinkSync(outputPath);
             }
 
-            fs.unlinkSync(inputPath); 
+            fs.unlinkSync(inputPath); // حذف الصورة الأصلية المؤقتة
 
             results.push({
                 original_name: originalName,
@@ -138,9 +133,4 @@ app.post('/compress', upload.any(), async (req, res) => {
     res.json(results);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
-
+app.listen(3000, () => console.log('Server running on http://0.0.0.0:3000'));
