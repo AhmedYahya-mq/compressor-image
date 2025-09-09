@@ -4,6 +4,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
+const axios = require("axios");
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -17,12 +18,15 @@ app.use(morgan("dev"));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// جعل مجلد compressed متاح عبر HTTP
+app.use("/compressed", express.static(path.join(__dirname, "compressed")));
+
 function logRequest(req) {
     const timestamp = new Date().toISOString();
     const logData = {
         time: timestamp,
         body: req.body,
-        files: req.files.map(f => ({ fieldname: f.fieldname, originalname: f.originalname, size: f.size })),
+        files: req.files ? req.files.map(f => ({ fieldname: f.fieldname, originalname: f.originalname, size: f.size })) : [],
         url: req.originalUrl,
         method: req.method
     };
@@ -30,6 +34,7 @@ function logRequest(req) {
     fs.appendFileSync('logs/requests.txt', logText, 'utf8');
 }
 
+// API ضغط الصور من رفع مباشر
 app.post('/compress', upload.any(), async (req, res) => {
     logRequest(req); // تسجيل البيانات في ملف قبل المعالجة
 
@@ -136,6 +141,52 @@ app.post('/compress', upload.any(), async (req, res) => {
     }
 
     res.json(results);
+});
+
+// API ضغط الصور من رابط URL
+app.post("/compress-url", async (req, res) => {
+    const { image_url, format, quality } = req.body;
+
+    if (!image_url) {
+        return res.status(400).json({ error: "image_url مطلوب" });
+    }
+
+    try {
+        // تحميل الصورة من الرابط
+        const response = await axios.get(image_url, { responseType: "arraybuffer" });
+        const buffer = Buffer.from(response.data);
+
+        let image = sharp(buffer);
+
+        // تحديد صيغة التحويل
+        const fmt = (format || "jpeg").toLowerCase();
+        const q = parseInt(quality) || 75;
+
+        const outputPath = `compressed/${Date.now()}.${fmt}`;
+
+        if (fmt === "jpeg" || fmt === "jpg") {
+            await image.jpeg({ quality: q }).toFile(outputPath);
+        } else if (fmt === "png") {
+            await image.png({ quality: q, compressionLevel: 9 }).toFile(outputPath);
+        } else if (fmt === "webp") {
+            await image.webp({ quality: q }).toFile(outputPath);
+        } else if (fmt === "avif") {
+            await image.avif({ quality: q }).toFile(outputPath);
+        } else {
+            return res.status(400).json({ error: "صيغة غير مدعومة" });
+        }
+
+        // إرجاع رابط الصورة المضغوطة
+        const compressedUrl = `${req.protocol}://${req.get("host")}/${outputPath}`;
+
+        res.json({
+            original_url: image_url,
+            compressed_url: compressedUrl
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.listen(3000, () => {
